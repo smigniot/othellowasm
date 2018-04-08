@@ -1,0 +1,4 @@
+[[package]]
+name = "othello_rust"
+version = "0.1.0"
+

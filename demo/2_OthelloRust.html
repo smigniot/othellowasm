@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <script type="text/javascript">
+function start() {
+    [].slice.call(document.querySelectorAll("table.othello tbody td")).forEach(function(td){
+        td.addEventListener("click", switchCell);
+    });
+    fetch("OthelloRust.wasm").then((response)=>{
+        return response.arrayBuffer();
+    }).then((bytes)=>{
+        return WebAssembly.instantiate(bytes);
+    }).then(results => {
+        var module = results.instance.exports;
+        console.log("WebAssembly module", module);
+        wireNav(module);
+        document.querySelector("button.showMoves").click();
+    });
+}
+function board_as_ptr(scope) {
+    var cells = [].slice.call(document.querySelectorAll("table.othello tbody td"));
+    var ptr = scope.alloc(65);
+    var memory = new Uint8Array(scope.memory.buffer);
+    for (i = 0; i < 64; i++) {
+        var cn = cells[i].className;
+        memory[ptr+i] = (cn=="white")?49:(
+                        (cn=="black")?50:48);
+    }
+    memory[ptr+i] = 0;
+    return ptr;
+}
+function wireNav(scope) {
+    document.querySelector("button.showMoves").addEventListener("click", function() {
+        var board = board_as_ptr(scope);
+        var color = +(document.querySelector("select.currentColor").value);
+        var out = scope.othello_moves(board,color);
+        var moves = copyCStr(scope,out);
+        scope.dealloc(board);
+        scope.dealloc(out);
+        revealMoves(scope, moves.split(",").map(m=>+m));
+    });
+}
+function switchCell() {
+    var c = this.className;
+    if(c == "empty") c = "white";
+    else if(c == "white") c = "black";
+    else if(c == "black") c = "empty";
+    this.className = c;
+}
+function copyCStr(module, ptr) {
+    let orig_ptr = ptr;
+    const collectCString = function* () {
+        let memory = new Uint8Array(module.memory.buffer);
+        while (memory[ptr] !== 0) {
+            if (memory[ptr] === undefined) { throw new Error("Tried to read undef mem") };
+            yield memory[ptr];
+            ptr += 1;
+        }
+    }
+
+    const buffer_as_u8 = new Uint8Array(collectCString());
+    const utf8Decoder = new TextDecoder("UTF-8");
+    const buffer_as_utf8 = utf8Decoder.decode(buffer_as_u8);
+    module.dealloc(orig_ptr);
+    return buffer_as_utf8;
+}
+function revealMoves(scope, moves) {
+    [].slice.call(document.querySelectorAll("table.othello tbody td span.possible"))
+        .forEach(span=>{ span.parentNode.removeChild(span); });
+    var movespans = moves.map(m=>{
+        if(m < 64) {
+            var td = [].slice.call(document.querySelectorAll("table.othello tbody td"))[m];
+            var span = td.appendChild(document.createElement("span"));
+            span.setAttribute("class", "possible");
+            span.addEventListener("click", function(event){
+                playMove(this, scope, event);
+            });
+            span.textContent = " ";
+            return {
+                move:m,
+                span:span,
+            }
+        }
+        return {
+            move:m,
+        }
+    });
+    console.log("Moves", movespans);
+    var color = +(document.querySelector("select.currentColor").value);
+    var depth = +(document.querySelector("select.currentDepth").value);
+    movespans.forEach(ms=>{
+        // 1. play move
+        var board = board_as_ptr(scope);
+        var out = scope.othello_play(board, color, 
+            ms.move);
+        var played = copyCStr(scope,out);
+        // 2. copy to new board
+        var child = scope.alloc(65);
+        var memory = new Uint8Array(scope.memory.buffer);
+        for(var i=0; i<64; i++) {
+            var n = +(played.charAt(i));
+            memory[child+i] = 48+n;
+        };
+        memory[child+i] = 0;
+        // 3. call minimax
+        var opponent = (color==1)?2:1;
+        if(ms.span) {
+            var n = -scope.othello_minimax(
+                child, opponent, depth);
+            ms.span.textContent = n;
+        }
+        scope.dealloc(out);
+        scope.dealloc(child);
+        scope.dealloc(board);
+    });
+}
+function playMove(span, scope, event) {
+    event && event.stopPropagation && event.stopPropagation();
+    var td = span.parentNode;
+    var cells = [].slice.call(document.querySelectorAll("table.othello tbody td"));
+    var n = cells.indexOf(td);
+    [].slice.call(document.querySelectorAll("table.othello tbody td span.possible"))
+        .forEach(span=>{ span.parentNode.removeChild(span); });
+
+    var board = board_as_ptr(scope);
+    var color = +(document.querySelector("select.currentColor").value);
+    var out = scope.othello_play(board, color, n);
+    var played = copyCStr(scope,out);
+    scope.dealloc(board);
+    scope.dealloc(out);
+
+    var cells = [].slice.call(document.querySelectorAll("table.othello tbody td"));
+    for(var i=0; i<64; i++) {
+        var n = +(played.charAt(i));
+        var cell = cells[i];
+        cell.className = (n==2)?"black":((n==1)?"white":"empty");
+    }
+    var select = document.querySelector("select.currentColor");
+    select.selectedIndex = ((select.selectedIndex)+1)%2;
+    document.querySelector("button.showMoves").click();
+}
+        </script>
+    <style type="text/css">
+.othello {
+    border-collapse: collapse;
+    background-color: green;
+}
+.othello td {
+    width:64px;
+    height:64px;
+    border: 1px solid black;
+    border-collapse: collapse;
+    text-align: center;
+}
+.othello span.possible {
+    display: inline-block;
+    vertical-align: middle;
+    text-align: center;
+    background-color: lightblue;
+    min-width: 32px;
+    min-height: 32px;
+}
+.othello .white {
+    background-color: white;
+    border-radius: 100%;
+}
+.othello .black {
+    background-color: black;
+    border-radius: 100%;
+}
+    </style>
+    </head>
+    <body onload="start()">
+        <nav class="controls">
+            Playing <select class="currentColor">
+                <option value="1" selected="selected">Black</option>
+                <option value="2">White</option>
+            </select>
+            <button class="showMoves">Show moves</button>
+            Depth <select class="currentDepth">
+                <option>0</option>
+                <option>1</option>
+                <option>2</option>
+                <option>3</option>
+                <option>4</option>
+                <option>5</option>
+                <option selected="selected">6</option>
+                <option>7</option>
+                <option>8</option>
+                <option>9</option>
+            </select>
+        </nav>
+        <table class="othello"><tbody>
+        <tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+        <tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+        <tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+        <tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="white"> </td><td class="black"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+        <tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="black"> </td><td class="white"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+        <tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+        <tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+        <tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+    </tbody></table>
+    </body>
+</html>

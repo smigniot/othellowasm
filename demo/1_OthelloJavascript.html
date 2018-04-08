@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html><head>
+        <meta charset="utf-8" />
+        <script type="text/javascript" id="common">
+var PASSMOVE = [-1,-1];
+class Board {
+    /* New board from 64 cells */
+    constructor(source,player) {
+        this.cells = source.slice();
+        this.player = player;
+    }
+    /* All moves available to color */
+    moves(color,previousPassed) {
+        color = color || this.player;
+        var opponent = (color==1)?2:1;
+        var neighbors = [ [-1,-1], [-1,0], [-1,1],
+            [0,-1], [0,1], [1,-1], [1,0], [1,1] ];
+        var candidates = [];
+        for(var i=0;i<8;i++) {
+            for(var j=0;j<8;j++) {
+                var n = i*8+j;
+                if(this.cells[n]) continue; // Cell is blank
+                var nearopponent = neighbors.filter(function(dxdy) {
+                    var i2 = i+dxdy[0];   
+                    var j2 = j+dxdy[1];   
+                    if((i2 < 0) || (i2 > 7)) return false;
+                    if((j2 < 0) || (j2 > 7)) return false;
+                    if( this.cells[i2*8+j2] == opponent) 
+                    return this.cells[i2*8+j2] == opponent;
+                }.bind(this));
+                if(nearopponent.length) {
+                    candidates.push([i,j]);
+                }
+            }
+        }
+        var appliable = candidates.filter(function(ij){
+            return this.changes(ij[0],ij[1],color);
+        }.bind(this));
+        if(appliable.length == 0) {
+            if(!previousPassed) {
+                var moves2 = this.moves(opponent, true);
+                if(moves2.length) {
+                    appliable = [PASSMOVE];
+                }
+            }
+        }
+        return appliable;
+    }
+    children() {
+        return this.moves().map(function(move){
+            return this.apply(move[0],move[1]);
+        }.bind(this));
+    }
+    /* Does new pawn of color on x,y change board */
+    changes(i,j,color) {
+        var opponent = (color==1)?2:1;
+        var spreads = [ [-1,-1], [-1,0], [-1,1],
+            [0,-1], [0,1], [1,-1], [1,0], [1,1] ];
+        if(this.cells[i*8+j]) return false;
+        for(var n=0; n<spreads.length; n++) {
+            var s = spreads[n], di = s[0], dj = s[1];
+            var i2 = i+di, j2 = j+dj;
+            if((i2 < 0) || (i2 > 7)) continue;
+            if((j2 < 0) || (j2 > 7)) continue;
+            if(this.cells[i2*8+j2] != opponent) continue;
+            while(this.cells[i2*8+j2] == opponent) {
+                i2+=di; j2+=dj;
+            }
+            if((i2 < 0) || (i2 > 7)) continue;
+            if((j2 < 0) || (j2 > 7)) continue;
+            if(this.cells[i2*8+j2] == color) {
+                return true;
+            }
+        }
+    }
+    apply(i,j,color) {
+        color = color || this.player;
+        var opponent = (color==1)?2:1;
+        var res = new Board(this.cells,opponent);
+        if([i,j]==PASSMOVE) { return res; }
+
+        var cells = res.cells;
+        cells[i*8+j] = color;
+        var spreads = [ [-1,-1], [-1,0], [-1,1],
+            [0,-1], [0,1], [1,-1], [1,0], [1,1] ];
+        var allswaps = [];
+        for(var n=0; n<spreads.length; n++) {
+            var s = spreads[n], di = s[0], dj = s[1];
+            var i2 = i+di, j2 = j+dj;
+            if((i2 < 0) || (i2 > 7)) continue;
+            if((j2 < 0) || (j2 > 7)) continue;
+            if(this.cells[i2*8+j2] != opponent) continue;
+            var toswap = [];
+            while(this.cells[i2*8+j2] == opponent) {
+                toswap.push([i2,j2]);
+                i2+=di; j2+=dj;
+            }
+            if((i2 < 0) || (i2 > 7)) continue;
+            if((j2 < 0) || (j2 > 7)) continue;
+            if(this.cells[i2*8+j2] == color) {
+                allswaps = allswaps.concat(toswap);
+            }
+        }
+        for(var k=0; k<allswaps.length;k++) {
+            cells[(allswaps[k][0])*8 + (allswaps[k][1])] = color;
+        }
+        return res;
+    }
+
+    minimax(notefunc,depth,maximizingPlayer,counter) {
+        if(counter){counter.n++}
+        if(depth<=0) {
+            return notefunc(this);
+        } else {
+            var children = this.children();
+            if(children.length == 0) {
+                return notefunc(this);
+            } else {
+                var _max = maximizingPlayer?(
+                    function(a,b){return Math.max(a,b)}):(
+                    function(a,b){return Math.min(a,b)});
+                return children
+                    .map(function(child){
+                        return child.minimax(notefunc,depth-1,!maximizingPlayer,counter);
+                    }).reduce(_max)
+                    ;
+            }
+        }
+    }
+    makeANote(player) {
+        var opponent = (player==1)?2:1;
+        var features = this.cells.reduce(function(acc,o,n){
+            var i = Math.floor(n/8);
+            var j = n%8;
+            var iscorner = ((i%7)==0)&&((j%7)==0);
+            var isborder = ((i%7)==0)||((j%7)==0);
+            if(o == player)   { acc.note += iscorner?10:(isborder?4:1); acc.mine++; }
+            if(o == opponent) { acc.note -= iscorner?15:(isborder?5:1); acc.theirs++; }
+            return acc;
+        },{note:0,mine:0,theirs:0});
+
+        return (features.theirs <= 0)?(1024*(10*4+4*6*4+36)):(features.note);
+    }
+    titleCount(player) {
+        return this.cells.reduce(function(acc,o){
+            var opponent = (player==1)?2:1;
+            if(o == player) acc.mine++;
+            else if(o == opponent) acc.theirs++;
+            return acc;
+        },{mine:0,theirs:0});
+    }
+}
+        </script>
+        <script type="text/javascript" id="pageonly">
+function teletext(stuff) {
+    var dbg = document.querySelector(".debug");
+    dbg.textContent += "\n"+(stuff || "");
+    dbg.scrollTop = dbg.scrollHeight;
+}
+function boot() {
+    [].slice.call(document.querySelectorAll("table.othello tbody td")).forEach(function(td){
+        td.addEventListener("click", switchCell);
+    });
+    clearPossibles();
+    showPossibles();
+}
+function switchCell() {
+    var c = this.className;
+    if(c == "empty") c = "white";
+    else if(c == "white") c = "black";
+    else if(c == "black") c = "empty";
+    this.className = c;
+}
+function classNameToNum(td) {
+    return colorToNum(td.className);
+}
+function colorToNum(c) {
+    if(c == "white") return 1;
+    if(c == "black") return 2;
+    return 0;
+}
+function numToColor(c) {
+    if(c==1) return "white";
+    if(c==2) return "black";
+    return "empty";
+}
+function getBoard() {
+    var cells = [].slice.call(document.querySelectorAll("table.othello tbody td")
+                             ).map(classNameToNum);
+    var color = colorToNum(document.querySelector(".player").value);
+    return new Board(cells,color);
+}
+function getCell(i,j) {
+    return [].slice.call(document.querySelectorAll("table.othello tbody td"))[i*8+j];
+}
+function clearPossibles() {
+    [].slice.call(document.querySelectorAll(
+                "table.othello tbody td span.possible, nav.controls button.pass"))
+        .forEach(function(span) {
+            span.parentNode.removeChild(span);
+        });
+}
+function showPossibles() {
+    var board = getBoard();
+    var possibles = board.moves();
+    clearPossibles();
+    //console.log("SHOW", board, possibles);
+    possibles.forEach(function(p){
+        if(p != PASSMOVE) {
+            var t = board.apply(p[0],p[1]).titleCount(board.player);
+            var span = revealPossible(p);
+            span.textContent = t.mine+"/"+t.theirs;
+        } else {
+            var t = board.apply(p[0],p[1]).titleCount(board.player);
+            var nav = document.querySelector("nav.controls");
+            [].slice.call(nav.querySelectorAll("button.pass")).forEach(function(button){
+                button.parentNode.removeChild(button);
+            });
+            var button = nav.appendChild(document.createElement("button"));
+            button.setAttribute("class", "pass");
+            button.textContent = "Pass";
+            button.onclick = function() {
+                // DO PASS
+                var passing = getBoard();
+                var opponent = (passing.player==1)?2:1;
+                document.querySelector(".player").value = numToColor(opponent);
+                button.parentNode.removeChild(button);
+                clearPossibles();
+                showPossibles();
+            };
+        }
+    });
+}
+function revealPossible(ij) {
+    if(ij != PASSMOVE) {
+        var i=ij[0], j=ij[1];
+        var td = getCell(i, j);
+        var span = td.appendChild(document.createElement("span"));
+        span.setAttribute("class", "possible");
+        span.addEventListener("click", playMove);
+        return span;
+    }
+}
+var timeout = null;
+function autoplay(input) {
+    var doit = input.checked;
+    if(!doit) {
+        timeout = null;
+    } else {
+        timeout = setTimeout(autoplaystep,100);
+    }
+}
+function autoplaystep() {
+    if(timeout) {
+        playForMe(true);
+        timeout = setTimeout(autoplaystep,100);
+    }
+}
+function playForMe(confirmed) {
+    var DEPTH = +(document.querySelector(".depth").value)
+    var COUNT = {n:0};
+    var board = getBoard();
+    var moves = board.moves();
+    clearPossibles();
+    if(moves.length) {
+        var best = moves.reduce(function(best,move){
+            var outcome = board.apply(move[0],move[1]);
+            var note = outcome.minimax(
+                function(b){return b.makeANote(board.player)},
+                DEPTH,true,COUNT);
+            //console.log("minimax", COUNT);
+            //teletext("Play at "+(move[1])+","+(move[0])+" evaluated "+COUNT.n+" situations");
+            return (note > best.note)?({note:note,move:move}):best;
+        },{note:-1024*1024,move:moves[0]});
+        console.log("BEST", best);
+        revealPossible(best.move);
+        if(confirmed) {
+            var after = board.apply(best.move[0],best.move[1]);
+            setBoard(after);
+            document.querySelector(".player").value = numToColor(after.player);
+            showPossibles();
+        }
+    }
+}
+
+function minimaxInWorker(board, callback) {
+    var source = ["common", "worker"].map(function(_id){
+        var ele = document.querySelector("#"+_id);
+        //console.log("SRC_ELE", ele);
+        var part = ele.textContent.trim();
+        //console.log("SRC_PART", part);
+        return part;
+    }).join("\n\n");
+    //console.log("Worker source", source);
+    var worker = new Worker("data:text/javascript;base64,"+btoa(source));
+    worker.onmessage = callback;
+    worker.postMessage(board);
+}
+
+function playMove(e) {
+    if(e && e.preventDefault) e.preventDefault();
+    if(e && e.stopPropagation) e.stopPropagation();
+    var span = e.target;
+    var td = span.parentNode;
+    var n = [].slice.call(document.querySelectorAll(
+                "table.othello tbody td")).indexOf(td);
+    var i = Math.floor(n/8), j = n%8;
+    var before = getBoard();
+    var color = before.player;
+    var after = before.apply(i,j);
+    setBoard(after);
+    var opponent = (color==1)?2:1;
+    document.querySelector(".player").value = numToColor(opponent);
+    showPossibles();
+}
+function setBoard(board) {
+    clearPossibles();
+    for(var n=0; n<64; n++) {
+        var td = getCell(Math.floor(n/8),n%8);
+        td.className = numToColor(board.cells[n]);
+    }
+}
+</script>
+<script type="text/unusedmimetype" id="worker">
+onmessage = function(message) {
+    console.log("WRK: message =", message);
+    var original = message.data;
+    var clone = new Board(original.cells, original.player);
+    console.log("WRK: processing minimax on", clone);
+    var note = clone.minimax(
+        function(b){return b.makeANote(clone.player)},
+        9,true);
+    console.log("WRK: processed note =", note, "on", clone);
+    var feedback = {
+        board: original,
+        note: note,
+    };
+    postMessage(feedback);
+    console.log("WRK: sent", feedback);
+}
+</script>
+    <style type="text/css">
+.othello {
+    border-collapse: collapse;
+    background-color: green;
+}
+.othello td {
+    width:64px;
+    height:64px;
+    border: 1px solid black;
+    border-collapse: collapse;
+    text-align: center;
+}
+.othello span.possible {
+    display: inline-block;
+    vertical-align: middle;
+    text-align: center;
+    background-color: lightblue;
+    min-width: 32px;
+    min-height: 32px;
+}
+.othello .white {
+    background-color: white;
+    border-radius: 100%;
+}
+.othello .black {
+    background-color: black;
+    border-radius: 100%;
+}
+
+.debug {
+
+    display:block; position:fixed; bottom:3px; right: 3px; opacity:0.1; max-height: 24px; 
+    max-width: 256px;
+    
+    display: block;
+    position: fixed;
+    bottom: 3px;
+    right: 3px;
+    opacity: 0.1;
+    max-height: 48px;
+    max-width: 256px;
+    color: white;
+    background-color: black;
+    font-size: 9pt;
+    line-height: 1em;
+    font-smooth: never;
+    white-space: pre;
+    display: inline-block;
+    overflow-x: hidden;
+    overflow-y: auto;
+    text-overflow: ellipsis;
+    border: 1px solid black;
+    width: 41em;
+    height: 24em;
+}
+.debug:hover {
+    opacity:1; max-height: 512px; max-width:512px; z-index:255;
+}
+
+</style></head><body onload="boot()">
+<nav class="controls">
+    <select class="depth">
+        <option>2</option>
+        <option>3</option>
+        <option>4</option>
+        <option selected="selected">5</option>
+        <option>6</option>
+        <option>7</option>
+        <option>8</option>
+        <option>9</option>
+        <option>10</option>
+    </select>
+    <select class="player" onchange="clearPossibles();showPossibles()">
+        <option>white</option>
+        <option selected="selected">black</option>
+    </select>
+    <button onclick="playForMe(false)">Suggest for me</button>
+    <button onclick="playForMe(true)">Play for me</button>
+    <input type="checkbox" onchange="autoplay(this)">Autoplay</input>
+    <!--
+    <button onclick="minimaxInWorker(getBoard(),function(m){alert(m)})">HIGHLY EXPERIMENTAL</button>
+    -->
+</nav>
+<table class="othello"><tbody>
+<tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+<tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+<tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+<tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="white"> </td><td class="black"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+<tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="black"> </td><td class="white"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+<tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+<tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+<tr><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td><td class="empty"> </td></tr>
+</tbody></table>
+
+<div class="debug"></div>
+</body></html>
+
+
+
+
